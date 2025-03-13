@@ -35,6 +35,7 @@ export default function Home() {
     data: balanceData,
     isError: isBalanceError,
     error: balanceError,
+    refetch: refetchBalance,
   } = useReadContract({
     address: LOCKER_ADDRESS as Address,
     abi: LOCKER_ABI,
@@ -112,13 +113,15 @@ export default function Home() {
     }
   };
 
-  // Reset isWithdrawing when transaction is complete
+  // Reset isWithdrawing and refetch balance when transaction is complete
   useEffect(() => {
     if (transactionReceipt && isWithdrawing) {
       setIsWithdrawing(false);
       setShowHippo(true);
+      // Refetch balance after transaction is confirmed
+      refetchBalance();
     }
-  }, [transactionReceipt, isWithdrawing]);
+  }, [transactionReceipt, isWithdrawing, refetchBalance]);
 
   // Show write errors
   useEffect(() => {
