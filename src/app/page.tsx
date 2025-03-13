@@ -1,103 +1,235 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { useAccount, useDisconnect } from "wagmi";
+import { useWeb3Modal } from "@web3modal/wagmi/react";
+import {
+  useReadContract,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
+import { LOCKER_ABI, LOCKER_ADDRESS } from "@/config/contracts";
+import { mainnet } from "wagmi/chains";
+import { type Address } from "viem";
+import FlyingHippo from "@/components/FlyingHippo";
+
+const MAX_UINT256 = BigInt(
+  "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+);
+
+type BalanceResult = readonly [bigint, bigint];
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const { address, isConnected } = useAccount();
+  const { open } = useWeb3Modal();
+  const { disconnect } = useDisconnect();
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [balances, setBalances] = useState<{
+    locked: bigint;
+    unlocked: bigint;
+  } | null>(null);
+  const [showHippo, setShowHippo] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const {
+    data: balanceData,
+    isError: isBalanceError,
+    error: balanceError,
+  } = useReadContract({
+    address: LOCKER_ADDRESS as Address,
+    abi: LOCKER_ABI,
+    functionName: "getAccountBalances",
+    args: address ? [address as Address] : undefined,
+    chainId: mainnet.id,
+  });
+
+  const {
+    writeContract,
+    isError: isWriteError,
+    error: writeError,
+  } = useWriteContract();
+  const { data: transactionReceipt, isLoading: isWaitingForReceipt } =
+    useWaitForTransactionReceipt();
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // Debug logging for balance data
+  useEffect(() => {
+    if (address) {
+      console.log("Current wallet address:", address);
+      console.log("Contract address:", LOCKER_ADDRESS);
+      console.log("Raw balance data:", balanceData);
+      if (isBalanceError) {
+        console.error("Balance fetch error:", balanceError);
+      }
+    }
+  }, [address, balanceData, isBalanceError, balanceError]);
+
+  useEffect(() => {
+    if (balanceData) {
+      console.log("Processing balance data:", balanceData);
+      try {
+        const [locked, unlocked] = balanceData as BalanceResult;
+        console.log("Raw locked value:", locked.toString());
+        console.log("Raw unlocked value:", unlocked.toString());
+        console.log(
+          "Parsed balances - Locked:",
+          locked.toString(),
+          "Unlocked:",
+          unlocked.toString()
+        );
+        setBalances({ locked, unlocked });
+      } catch (error) {
+        console.error("Error processing balance data:", error);
+        console.error("Balance data type:", typeof balanceData);
+        console.error(
+          "Balance data structure:",
+          JSON.stringify(balanceData, null, 2)
+        );
+      }
+    }
+  }, [balanceData]);
+
+  const handleWithdraw = async () => {
+    if (!address || !writeContract) return;
+    try {
+      setIsWithdrawing(true);
+      writeContract({
+        address: LOCKER_ADDRESS as Address,
+        abi: LOCKER_ABI,
+        functionName: "withdrawWithPenalty",
+        args: [MAX_UINT256],
+        chainId: mainnet.id,
+      });
+    } catch (error) {
+      console.error("Error withdrawing:", error);
+      window.alert(
+        error instanceof Error ? error.message : "Failed to withdraw"
+      );
+      setIsWithdrawing(false);
+    }
+  };
+
+  // Reset isWithdrawing when transaction is complete
+  useEffect(() => {
+    if (transactionReceipt && isWithdrawing) {
+      setIsWithdrawing(false);
+      setShowHippo(true);
+    }
+  }, [transactionReceipt, isWithdrawing]);
+
+  // Show write errors
+  useEffect(() => {
+    if (isWriteError && writeError) {
+      window.alert(writeError.message);
+      setIsWithdrawing(false);
+    }
+  }, [isWriteError, writeError]);
+
+  // Show hippo when balance becomes 0
+  useEffect(() => {
+    if (
+      balances &&
+      balances.locked.toString() === "0" &&
+      balances.unlocked.toString() === "0"
+    ) {
+      setShowHippo(true);
+    }
+  }, [balances]);
+
+  const formatBalance = (value: bigint | undefined) => {
+    if (!value) return "0";
+    // Display raw value without decimal conversion
+    return value.toString();
+  };
+
+  const buttonClasses = "w-full";
+
+  const hasNoBalance =
+    balances &&
+    balances.locked.toString() === "0" &&
+    balances.unlocked.toString() === "0";
+
+  if (!isMounted) {
+    return (
+      <main className="min-h-screen bg-white p-8">
+        <div className="max-w-2xl mx-auto">
+          <h1 className="text-3xl font-bold text-black mb-4">
+            PRISMA Lock Breaker
+          </h1>
+          <p className="text-black mb-8">
+            Click button to max withdraw your PRISMA from locker. Any existing
+            lock will be broken.
+          </p>
+          <button
+            disabled
+            className={`${buttonClasses} disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Loading...
+          </button>
         </div>
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-white p-8">
+      {showHippo && <FlyingHippo />}
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-3xl font-bold text-black mb-4">
+          PRISMA Lock Breaker
+        </h1>
+        <p className="text-black mb-8">
+          Click button to max withdraw your PRISMA from locker. Any existing
+          lock will be broken.
+        </p>
+
+        {!isConnected ? (
+          <button onClick={() => open()} className={buttonClasses}>
+            Connect Wallet
+          </button>
+        ) : (
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <p className="text-black">Connected: {address}</p>
+              <p className="text-black">
+                Locked: {formatBalance(balances?.locked)} PRISMA
+              </p>
+              <p className="text-black">
+                Unlocked: {formatBalance(balances?.unlocked)} PRISMA
+              </p>
+            </div>
+
+            {hasNoBalance ? (
+              <div className="text-center text-black text-lg">
+                🎉 Congratulations! Your wallet is completely withdrawn from the
+                PRISMA locker
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <button
+                  onClick={() => void handleWithdraw()}
+                  disabled={isWithdrawing || isWaitingForReceipt}
+                  className={`${buttonClasses} w-full disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  {isWithdrawing || isWaitingForReceipt
+                    ? "Processing..."
+                    : "Withdraw All with Penalty"}
+                </button>
+
+                <button
+                  onClick={() => disconnect()}
+                  className={`${buttonClasses} w-full`}
+                >
+                  Disconnect
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </main>
   );
 }
