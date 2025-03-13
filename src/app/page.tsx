@@ -185,8 +185,9 @@ export default function Home() {
           PRISMA Lock Breaker
         </h1>
         <p className="text-black mb-8">
-          Click button to max withdraw your PRISMA from locker. Any existing
-          lock will be broken.
+          {!isConnected
+            ? "Connect your wallet to view your lock info"
+            : "Click button to max withdraw your PRISMA from locker. Any existing lock will be broken."}
         </p>
 
         {!isConnected ? (
